@@ -16,7 +16,7 @@ async fn on_message(buffer: &[u8], node_addr: SocketAddr) {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let mut controller = Controller::new(8288).await.unwrap();
 
     controller.start().await;
@@ -27,5 +27,4 @@ async fn main() -> Result<()> {
         i += 1;
         tokio::time::delay_for(Duration::from_secs(1)).await;
     }
-    Ok(())
 }

@@ -18,7 +18,7 @@ pub enum ProtocolError {
 
 impl From<ProtocolError> for TaskError {
     fn from(e: ProtocolError) -> Self {
-        TaskError::ProtocolError(e)
+        TaskError::Protocol(e)
     }
 }
 

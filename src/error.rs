@@ -1,3 +1,4 @@
+use crate::controller::ControllerError;
 use crate::protocol::ProtocolError;
 use serde::export::Formatter;
 use thiserror::Error;
@@ -7,14 +8,14 @@ pub type Result<T> = std::result::Result<T, TaskError>;
 
 #[derive(Debug, Error)]
 pub enum TaskError {
-    ProtocolError(ProtocolError),
-    IoError(io::Error),
-    ControllerError,
+    Protocol(ProtocolError),
+    Io(io::Error),
+    Controller(ControllerError),
 }
 
 impl From<std::io::Error> for TaskError {
     fn from(e: io::Error) -> Self {
-        TaskError::IoError(e)
+        TaskError::Io(e)
     }
 }
 

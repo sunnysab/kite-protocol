@@ -2,22 +2,35 @@ use crate::error::{Result, TaskError};
 use crate::node::Node;
 use crate::protocol::{Body, Frame, PACK_REQUEST};
 use chrono::Utc;
-use std::borrow::BorrowMut;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use tokio::net::udp::{RecvHalf, SendHalf};
-use tokio::net::UdpSocket;
-use tokio::stream::StreamExt;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::net::{
+    udp::{RecvHalf, SendHalf},
+    UdpSocket,
+};
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    oneshot, Mutex,
+};
 use tokio::time::Duration;
 
 pub type SeqType = u32;
-pub type SegType = u8;
 
-pub enum ControllerError {}
+#[derive(Debug)]
+pub enum ControllerError {
+    NoCarawler,
+    InitNeeded,
+    Timeout,
+}
+
+impl From<ControllerError> for TaskError {
+    fn from(e: ControllerError) -> Self {
+        TaskError::Controller(e)
+    }
+}
+
+// type Result<T> = std::result::Result<T, ControllerError>;
 
 /// Controller, as server side node
 pub struct Controller {
@@ -25,12 +38,15 @@ pub struct Controller {
     nodes: Vec<Node>,
     /// Local address and port
     addr: String,
-
+    /// Sender, send frames to send loop
     sender: Option<Sender<(Frame, SocketAddrV4)>>,
-
+    /// Queue, which queued requests which not being responded at the moment. <br>
+    /// When `request()` sent a frame, it also adds a `oneshot::Sender` here, so that `receive_loop()`
+    /// can find the requester and post response for it.
+    // TODO: Use oneshot instead of mpsc.
     wait_queue: Arc<Mutex<HashMap<SeqType, mpsc::Sender<(Frame, SocketAddrV4)>>>>,
 
-    /* Statisic information. */
+    /* Statistic information. */
     /// Count of sent frames.
     pub frame_sent: usize,
     /// Count of received frames.
@@ -38,7 +54,7 @@ pub struct Controller {
 }
 
 impl Controller {
-    /// Create a controller node.
+    /// Create and initialize a controller node.
     pub async fn new(port: u16) -> Result<Self> {
         let local_addr = format!("0.0.0.0:{}", port);
 
@@ -46,37 +62,38 @@ impl Controller {
             nodes: vec![],
             addr: local_addr,
             sender: None,
-            // receiver: None,
             wait_queue: Arc::new(Mutex::new(HashMap::new())),
             frame_sent: 0,
             frame_recv: 0,
         })
     }
 
+    /// Receive frames and post them to where they should go :D
     async fn receive_loop(
         mut recv_socket: RecvHalf,
         wait_queue: Arc<Mutex<HashMap<SeqType, mpsc::Sender<(Frame, SocketAddrV4)>>>>,
     ) {
+        // Alloc 512K for Udp receive buffer.
         let mut buffer = vec![0u8; 512 * 1024];
 
         loop {
-            match recv_socket.recv_from(&mut buffer).await {
-                Ok((size, SocketAddr::V4(addr))) => {
-                    let frame = Frame::read(&mut buffer[..size]).unwrap();
-                    let seq = frame.seq;
-                    let mut queue = wait_queue.lock().await;
+            // Wait for new udp packet
+            if let Ok((size, SocketAddr::V4(addr))) = recv_socket.recv_from(&mut buffer).await {
+                // Read and deserialize the frame
+                let frame = Frame::read(&mut buffer[..size]).unwrap();
+                let seq = frame.seq;
 
-                    // TODO: Use oneshot instead of mpsc.
-                    if let Some(target) = queue.get_mut(&seq) {
-                        target.send((frame, addr));
-                        queue.remove(&seq);
-                    }
+                // Find receiver and post the new response to him.
+                let mut queue = wait_queue.lock().await;
+                if let Some(target) = queue.get_mut(&seq) {
+                    target.send((frame, addr));
+                    queue.remove(&seq);
                 }
-                _ => {}
             }
         }
     }
 
+    /// The send loop, receive protocol requests and post to crawlers over UDP.
     async fn send_loop(mut send_socket: SendHalf, mut rx: Receiver<(Frame, SocketAddrV4)>) {
         while let Some((frame, peer)) = rx.recv().await {
             let peer = SocketAddr::V4(peer);
@@ -85,6 +102,7 @@ impl Controller {
         }
     }
 
+    /// Bind socket and start
     pub async fn start(&mut self) -> Result<()> {
         // Create channel to send/recv task
         let (tx, rx) = mpsc::channel::<(Frame, SocketAddrV4)>(100);
@@ -104,24 +122,23 @@ impl Controller {
         Ok(())
     }
 
+    /// Choose an available node randomly.
     fn choose_node(&mut self, _body: &Body) -> Option<SocketAddrV4> {
         if self.nodes.len() != 0 {
-            // TODO: Choose recently used.
-            // random_choose
+            // TODO: 随机选择节点
+            // TODO: 淘汰过旧节点
             self.nodes[0].last_update = Utc::now().naive_local();
             return Some(self.nodes[0].node_addr);
         }
         return None;
     }
 
-    pub async fn request(&mut self, body: Body, timeout: u64) -> Result<Frame> {
-        if self.sender.is_none() {
-            return Err(TaskError::ControllerError);
-        }
-
+    /// Send a request and return the response.
+    pub async fn request(&mut self, body: Body, timeout: u64) -> Result<Body> {
         let node = self.choose_node(&body).unwrap();
+
         if let Some(sender) = &mut self.sender {
-            let (mut tx, mut rx) = mpsc::channel::<(Frame, SocketAddrV4)>(1);
+            let (tx, mut rx) = mpsc::channel::<(Frame, SocketAddrV4)>(1);
             let frame = Frame::new(body, PACK_REQUEST).unwrap();
             let seq = frame.seq;
 
@@ -129,14 +146,15 @@ impl Controller {
 
             let mut wait_queue = self.wait_queue.lock().await;
             wait_queue.insert(seq, tx);
+            // Release lock immediately
             drop(wait_queue);
 
             let response = tokio::time::timeout(Duration::from_millis(timeout), rx.recv()).await;
             return match response {
-                Ok(Some((frame, _))) => Ok(frame),
-                _ => Err(TaskError::ControllerError),
+                Ok(Some((frame, _))) => Ok(frame.body),
+                _ => Err(ControllerError::Timeout.into()),
             };
         }
-        return Err(TaskError::ControllerError);
+        return Err(ControllerError::NoCarawler.into());
     }
 }

@@ -1,4 +1,3 @@
-use super::error::Result;
 use chrono::NaiveDateTime;
 use std::net::SocketAddrV4;
 
