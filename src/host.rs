@@ -1,6 +1,7 @@
 use crate::error::{Result, TaskError};
 use crate::node::Node;
-use crate::protocol::{Body, Frame, PACK_REQUEST};
+use crate::protocol::Frame;
+use crate::services::Body;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
@@ -135,7 +136,7 @@ impl Host {
 
         if let Some(sender) = &mut self.sender {
             let (tx, mut rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
-            let frame = Frame::new(body, PACK_REQUEST).unwrap();
+            let frame = Frame::new(body).unwrap();
             let seq = frame.seq;
 
             sender.send((frame, node)).await;
