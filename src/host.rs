@@ -41,8 +41,7 @@ pub struct Host {
     /// Queue, which queued requests which not being responded at the moment. <br>
     /// When `request()` sent a frame, it also adds a `oneshot::Sender` here, so that `receive_loop()`
     /// can find the requester and post response for it.
-    // TODO: Use oneshot instead of mpsc.
-    wait_queue: Arc<Mutex<HashMap<SeqType, mpsc::Sender<(Frame, SocketAddrV4)>>>>,
+    wait_queue: Arc<Mutex<HashMap<SeqType, oneshot::Sender<(Frame, SocketAddrV4)>>>>,
 
     /* Statistic information. */
     /// Count of sent frames.
@@ -69,7 +68,7 @@ impl Host {
     /// Receive frames and post them to where they should go :D
     async fn receive_loop(
         mut recv_socket: RecvHalf,
-        wait_queue: Arc<Mutex<HashMap<SeqType, mpsc::Sender<(Frame, SocketAddrV4)>>>>,
+        wait_queue: Arc<Mutex<HashMap<SeqType, oneshot::Sender<(Frame, SocketAddrV4)>>>>,
     ) {
         // Alloc 512K for Udp receive buffer.
         let mut buffer = vec![0u8; 512 * 1024];
@@ -83,9 +82,8 @@ impl Host {
 
                 // Find receiver and post the new response to him.
                 let mut queue = wait_queue.lock().await;
-                if let Some(target) = queue.get_mut(&seq) {
+                if let Some(target) = queue.remove(&seq) {
                     target.send((frame, addr));
-                    queue.remove(&seq);
                 }
             }
         }
@@ -136,7 +134,7 @@ impl Host {
         let node = self.choose_node(&body).unwrap();
 
         if let Some(sender) = &mut self.sender {
-            let (tx, mut rx) = mpsc::channel::<(Frame, SocketAddrV4)>(1);
+            let (tx, mut rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
             let frame = Frame::new(body, PACK_REQUEST).unwrap();
             let seq = frame.seq;
 
@@ -147,9 +145,9 @@ impl Host {
             // Release lock immediately
             drop(wait_queue);
 
-            let response = tokio::time::timeout(Duration::from_millis(timeout), rx.recv()).await;
+            let response = tokio::time::timeout(Duration::from_millis(timeout), rx).await;
             return match response {
-                Ok(Some((frame, _))) => Ok(frame.body),
+                Ok(Ok((frame, _))) => Ok(frame.body),
                 _ => Err(HostError::Timeout.into()),
             };
         }
