@@ -1,10 +1,9 @@
 extern crate bincode;
+extern crate kite_protocol;
 
-mod controller;
-mod error;
-mod modules;
-mod node;
-mod protocol;
+use kite_protocol::agent;
+use kite_protocol::error::Result;
+use kite_protocol::services;
 
 use crate::error::Result;
 use crate::node::Node;
@@ -21,7 +20,7 @@ async fn main() -> Result<()> {
         .await?;
 
     loop {
-        let payload = crate::modules::heartbeat::Heartbeat::Ping(Vec::from("Hello world!"));
+        let payload = crate::services::heartbeat::Heartbeat::Ping(Vec::from("Hello world!"));
         let content = Body::Heartbeat(payload);
 
         client.send(content).await?;

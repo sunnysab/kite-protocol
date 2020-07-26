@@ -1,5 +1,5 @@
 use crate::error::TaskError;
-use crate::modules::heartbeat::Heartbeat;
+use crate::services::heartbeat::Heartbeat;
 use bincode::deserialize;
 use bytes::{Buf, BufMut};
 use serde::{Deserialize, Serialize};

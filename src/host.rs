@@ -18,22 +18,20 @@ use tokio::time::Duration;
 pub type SeqType = u32;
 
 #[derive(Debug)]
-pub enum ControllerError {
+pub enum HostError {
     NoCarawler,
     InitNeeded,
     Timeout,
 }
 
-impl From<ControllerError> for TaskError {
-    fn from(e: ControllerError) -> Self {
+impl From<HostError> for TaskError {
+    fn from(e: HostError) -> Self {
         TaskError::Controller(e)
     }
 }
 
-// type Result<T> = std::result::Result<T, ControllerError>;
-
 /// Controller, as server side node
-pub struct Controller {
+pub struct Host {
     /// Crawler nodes.
     nodes: Vec<Node>,
     /// Local address and port
@@ -53,7 +51,7 @@ pub struct Controller {
     pub frame_recv: usize,
 }
 
-impl Controller {
+impl Host {
     /// Create and initialize a controller node.
     pub async fn new(port: u16) -> Result<Self> {
         let local_addr = format!("0.0.0.0:{}", port);
@@ -152,9 +150,9 @@ impl Controller {
             let response = tokio::time::timeout(Duration::from_millis(timeout), rx.recv()).await;
             return match response {
                 Ok(Some((frame, _))) => Ok(frame.body),
-                _ => Err(ControllerError::Timeout.into()),
+                _ => Err(HostError::Timeout.into()),
             };
         }
-        return Err(ControllerError::NoCarawler.into());
+        return Err(HostError::NoCarawler.into());
     }
 }
