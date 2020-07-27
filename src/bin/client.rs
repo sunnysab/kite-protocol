@@ -21,9 +21,10 @@ async fn main() -> Result<()> {
     let mut agent = agent::AgentBuilder::new(8910)
         .host("10.2.0.239", 8288)
         .set_callback(callback.clone())
+        .set_heartbeart_interval(Duration::from_secs(1))
         .build();
 
-    agent.start().await;
+    agent.start().await?;
 
     loop {
         tokio::time::delay_for(Duration::from_secs(1)).await;

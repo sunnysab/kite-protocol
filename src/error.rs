@@ -13,6 +13,7 @@ pub enum TaskError {
     Io(io::Error),
     Controller(HostError),
     Runtime(JoinError),
+    SendError(String),
 }
 
 impl From<std::io::Error> for TaskError {

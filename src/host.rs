@@ -2,17 +2,13 @@ use crate::error::{Result, TaskError};
 use crate::node::Node;
 use crate::protocol::Frame;
 use crate::services::Body;
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
-use tokio::net::{
-    udp::{RecvHalf, SendHalf},
-    UdpSocket,
-};
-use tokio::sync::{
-    mpsc::{self, Receiver, Sender},
-    oneshot, Mutex,
-};
+use tokio::net::udp::{RecvHalf, SendHalf};
+use tokio::net::UdpSocket;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{Duration, Instant};
 
 pub type SeqType = u32;
@@ -37,9 +33,9 @@ pub struct Host {
     /// Local address and port
     addr: String,
     /// Sender, send frames to send loop
-    sender: Option<Sender<(Frame, SocketAddrV4)>>,
+    sender: Option<mpsc::Sender<(Frame, SocketAddrV4)>>,
     /// Queue, which queued requests which not being responded at the moment. <br>
-    /// When `request()` sent a frame, it also adds a `oneshot::Sender` here, so that `receive_loop()`
+    /// When `request()` sent a frame, it also adds a `oneshot::Sender` here, so that `receiver_loop()`
     /// can find the requester and post response for it.
     wait_queue: Arc<Mutex<HashMap<SeqType, oneshot::Sender<(Frame, SocketAddrV4)>>>>,
 
@@ -52,8 +48,8 @@ pub struct Host {
 
 impl Host {
     /// Create and initialize a controller node.
-    pub async fn new(port: u16) -> Result<Self> {
-        let local_addr = format!("0.0.0.0:{}", port);
+    pub async fn new(local_addr: &str, port: u16) -> Result<Self> {
+        let local_addr = format!("{}:{}", local_addr, port);
 
         Ok(Self {
             nodes: Arc::new(Mutex::new(vec![])),
@@ -65,18 +61,20 @@ impl Host {
         })
     }
 
+    /// Update agent list, add agent if not exist, and TODO: remove old agents.
     async fn update_node(nodes: Arc<Mutex<Vec<Node>>>, addr: &SocketAddrV4) {
+        // Acquire the lock to modify agent node list.
         let mut nodes = nodes.lock().await;
-        for i in nodes.iter_mut() {
-            if i.node_addr == *addr {
-                i.last_update = Instant::now();
+        for each_node in nodes.iter_mut() {
+            if each_node.node_addr == *addr {
+                each_node.last_update = Instant::now();
                 return;
             }
         }
-        // If the current is a new node
-        let pos = nodes.len();
-        nodes.insert(pos, Node::new(addr.clone()));
-        println!("Nodes: {:?}", nodes);
+        // The operation of inserting to position 0 is simple.
+        // Maybe it is costly, but insertion doesn't happen often.
+        info!("Add new agent node: {}", addr.to_string());
+        nodes.insert(0, Node::new(addr.clone()));
     }
 
     /// Choose an available node randomly.
@@ -84,7 +82,8 @@ impl Host {
         let mut nodes = self.nodes.lock().await;
         if nodes.len() != 0 {
             // TODO: 随机选择节点
-            // TODO: 淘汰过旧节点
+            // TODO: 淘汰过旧节点（最好单独开个任务做）
+            // 如果节点实际失效，下面一行代码可能导致失效节点不会被删除
             nodes[0].last_update = Instant::now();
             return Some(nodes[0].node_addr);
         }
@@ -92,7 +91,7 @@ impl Host {
     }
 
     /// Receive frames and post them to where they should go :D
-    async fn receive_loop(
+    async fn receiver_loop(
         mut recv_socket: RecvHalf,
         nodes: Arc<Mutex<Vec<Node>>>,
         wait_queue: Arc<Mutex<HashMap<SeqType, oneshot::Sender<(Frame, SocketAddrV4)>>>>,
@@ -100,32 +99,32 @@ impl Host {
         // Alloc 512K for Udp receive buffer.
         let mut buffer = vec![0u8; 512 * 1024];
 
-        loop {
-            // Wait for new udp packet
-            if let Ok((size, SocketAddr::V4(addr))) = recv_socket.recv_from(&mut buffer).await {
-                // Read and deserialize the frame
-                let frame = Frame::read(&mut buffer[..size]).unwrap();
-                let seq = frame.seq;
+        // Wait for new udp packet
+        while let Ok((size, SocketAddr::V4(addr))) = recv_socket.recv_from(&mut buffer).await {
+            // Read and deserialize the frame
+            let frame = Frame::read(&mut buffer[..size]).unwrap();
+            let seq = frame.seq;
 
-                // Refresh node list
-                Self::update_node(Arc::clone(&nodes), &addr).await;
+            // Refresh node list
+            Self::update_node(Arc::clone(&nodes), &addr).await;
 
-                // Find receiver and post the new response to him.
-                let mut queue = wait_queue.lock().await;
-                if let Some(target) = queue.remove(&seq) {
-                    target.send((frame, addr));
-                }
+            // Find receiver and post the new response to him.
+            let mut queue = wait_queue.lock().await;
+            if let Some(target) = queue.remove(&seq) {
+                target.send((frame, addr));
             }
         }
+        warn!("Host: Receiver loop exited.");
     }
 
     /// The send loop, receive protocol requests and post to crawlers over UDP.
-    async fn send_loop(mut send_socket: SendHalf, mut rx: Receiver<(Frame, SocketAddrV4)>) {
+    async fn sender_loop(mut send_socket: SendHalf, mut rx: mpsc::Receiver<(Frame, SocketAddrV4)>) {
         while let Some((frame, peer)) = rx.recv().await {
             let peer = SocketAddr::V4(peer);
 
             send_socket.send_to(frame.write().as_slice(), &peer).await;
         }
+        warn!("Host: Sender loop exited.");
     }
 
     /// Bind socket and start
@@ -138,12 +137,12 @@ impl Host {
         let (recv_socket, send_socket) = socket.split();
 
         // Spawn send/recv IO tasks.
-        tokio::spawn(Self::receive_loop(
+        tokio::spawn(Self::receiver_loop(
             recv_socket,
             Arc::clone(&self.nodes),
             Arc::clone(&self.wait_queue),
         ));
-        tokio::spawn(Self::send_loop(send_socket, rx));
+        tokio::spawn(Self::sender_loop(send_socket, rx));
         self.sender = Some(tx);
 
         Ok(())
@@ -151,19 +150,20 @@ impl Host {
 
     /// Send a request and return the response.
     pub async fn request(&mut self, body: Body, timeout: u64) -> Result<Body> {
-        let node = self.choose_node(&body).await.unwrap();
+        let node = self.choose_node(&body).await.ok_or(HostError::NoCarawler)?;
 
         if let Some(sender) = &mut self.sender {
             let (tx, rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
-            let frame = Frame::new(body).unwrap();
+            let frame = Frame::new(body)?;
             let seq = frame.seq;
 
-            sender.send((frame, node)).await;
-
+            // Acquire wait queue, add sender and release lock immediately.
             let mut wait_queue = self.wait_queue.lock().await;
             wait_queue.insert(seq, tx);
-            // Release lock immediately
             drop(wait_queue);
+
+            info!("Send request to {}: {}", node, frame);
+            sender.send((frame, node)).await;
 
             let response = tokio::time::timeout(Duration::from_millis(timeout), rx).await;
             return match response {
