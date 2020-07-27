@@ -4,6 +4,7 @@ use bincode::deserialize;
 use bytes::{Buf, BufMut};
 use serde::{Deserialize, Serialize};
 use std::io::Write;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 type Result<T> = std::result::Result<T, ProtocolError>;
 
@@ -23,6 +24,9 @@ impl From<ProtocolError> for TaskError {
 }
 
 const HEADER_MAGIC_HEADER: &'static [u8; 4] = &[0x07, 0x55, 0xAA, 0xB3];
+lazy_static! {
+    static ref LAST_SEQ: AtomicU32 = AtomicU32::new(0 as u32);
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Frame {
@@ -37,9 +41,20 @@ pub struct Frame {
 impl Frame {
     /// Create a new packet
     pub fn new(b: Body) -> Result<Frame> {
+        let seq = LAST_SEQ.fetch_add(1, Ordering::Relaxed);
+
         Ok(Frame {
             size: 0,
-            seq: 0,
+            seq: seq,
+            body: b,
+        })
+    }
+
+    /// Create a new packet
+    pub fn new_response(b: Body, seq: u32) -> Result<Frame> {
+        Ok(Frame {
+            size: 0,
+            seq,
             body: b,
         })
     }

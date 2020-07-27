@@ -7,5 +7,7 @@ pub enum Heartbeat {
 }
 
 impl Heartbeat {
-    pub fn from() {}
+    pub fn ping(random_string: &str) -> Self {
+        Self::Ping(random_string.as_bytes().to_vec())
+    }
 }

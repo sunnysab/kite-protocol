@@ -121,6 +121,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "chrono",
+ "lazy_static",
  "serde",
  "thiserror",
  "tokio",
