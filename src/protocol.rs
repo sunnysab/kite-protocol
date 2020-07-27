@@ -10,7 +10,7 @@ type Result<T> = std::result::Result<T, ProtocolError>;
 
 #[derive(Debug)]
 pub enum ProtocolError {
-    TooSmall,
+    TooSmall(usize),
     Serialize,
     Deserialize,
     MismatchSize,
@@ -80,7 +80,7 @@ impl Frame {
     pub fn read(buffer: &mut [u8]) -> Result<Self> {
         // If packet size < minimun size, throw up an error.
         if buffer.len() < 10 {
-            return Err(ProtocolError::TooSmall);
+            return Err(ProtocolError::TooSmall(buffer.len()));
         }
         // Check frame magic header.
         if &buffer[..4] != HEADER_MAGIC_HEADER {

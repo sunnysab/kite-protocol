@@ -159,14 +159,27 @@ impl Agent {
         let mut buffer = vec![0u8; 512 * 1024];
 
         info!("Start listening...");
-        while let Ok((size, _)) = recv_socket.recv_from(&mut buffer).await {
-            // Unpack and get the request frame
-            match Frame::read(&mut buffer[..size]) {
-                Ok(frame) => {
-                    // Create a coroutine to process.
-                    tokio::spawn(Self::process(frame, tx.clone(), imcoming.clone()));
+        loop {
+            let r = recv_socket.recv_from(&mut buffer).await;
+
+            if let Ok((size, addr)) = r {
+                // Note:
+                // If agent send heartbeat packet to host, while the host is offline, the operating system under host may
+                // return an "unreachable" notice which has a zero size. We should ignore them, or many warnings occur.
+                if size == 0 {
+                    continue;
                 }
-                Err(e) => warn!("Failed to unpack income frame: {:?}", e),
+                // Unpack and get the request frame
+                match Frame::read(&mut buffer[..size]) {
+                    Ok(frame) => {
+                        // Create a coroutine to process.
+                        tokio::spawn(Self::process(frame, tx.clone(), imcoming.clone()));
+                    }
+                    Err(e) => warn!("Failed to unpack frame from {}: {:?}", addr.to_string(), e),
+                }
+            } else {
+                warn!("In recv_loop, recv_from throws {:?}", r);
+                break;
             }
         }
         warn!("Receiver loop exited.");
