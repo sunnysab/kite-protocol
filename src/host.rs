@@ -135,7 +135,7 @@ impl Host {
         let node = self.choose_node(&body).unwrap();
 
         if let Some(sender) = &mut self.sender {
-            let (tx, mut rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
+            let (tx, rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
             let frame = Frame::new(body).unwrap();
             let seq = frame.seq;
 
