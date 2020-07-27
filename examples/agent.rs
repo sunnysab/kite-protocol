@@ -1,10 +1,13 @@
+#[macro_use]
+extern crate log;
 extern crate bincode;
-extern crate kite_protocol;
+extern crate simple_logger;
 
 use kite_protocol::agent;
 use kite_protocol::agent::Callback;
 use kite_protocol::error::Result;
 use kite_protocol::services::{self, Body};
+use simple_logger::init_with_level;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::sync::Arc;
 use tokio::time::Duration;
@@ -16,6 +19,8 @@ pub fn on_request(body: Body) -> Result<Body> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_with_level(log::Level::Info);
+
     let callback = Arc::new(on_request as Callback);
 
     let mut agent = agent::AgentBuilder::new(8910)

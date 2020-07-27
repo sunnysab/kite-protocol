@@ -99,6 +99,7 @@ impl Host {
         // Alloc 512K for Udp receive buffer.
         let mut buffer = vec![0u8; 512 * 1024];
 
+        info!("Start listening...");
         // Wait for new udp packet
         while let Ok((size, SocketAddr::V4(addr))) = recv_socket.recv_from(&mut buffer).await {
             // Read and deserialize the frame
@@ -129,11 +130,12 @@ impl Host {
 
     /// Bind socket and start
     pub async fn start(&mut self) -> Result<()> {
-        // Create channel to send/recv task
-        let (tx, rx) = mpsc::channel::<(Frame, SocketAddrV4)>(100);
-
         // Create Udp socket and bind local address.
         let socket = UdpSocket::bind(&self.addr).await?;
+        info!("Bind the local socket at udp://{}", self.addr);
+
+        // Create channel to send/recv task
+        let (tx, rx) = mpsc::channel::<(Frame, SocketAddrV4)>(100);
         let (recv_socket, send_socket) = socket.split();
 
         // Spawn send/recv IO tasks.
@@ -162,7 +164,7 @@ impl Host {
             wait_queue.insert(seq, tx);
             drop(wait_queue);
 
-            info!("Send request to {}: {}", node, frame);
+            info!("Send request to {}: {:?}", node, frame);
             sender.send((frame, node)).await;
 
             let response = tokio::time::timeout(Duration::from_millis(timeout), rx).await;
