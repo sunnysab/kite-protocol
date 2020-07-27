@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
 
     let callback = Arc::new(on_request as Callback);
 
-    let mut agent = agent::AgentBuilder::new(8910)
+    let mut agent = agent::AgentBuilder::new(String::from("Agent"), 8910)
         .host("10.2.0.239", 8288)
         .set_callback(callback.clone())
         .set_heartbeart_interval(Duration::from_secs(1))

@@ -122,7 +122,7 @@ impl Agent {
             // TODO: Send random data.
             let heartbeat_request = Heartbeat::ping("Hello world");
 
-            if let Ok(frame) = Frame::new(Body::Heartbeat(heartbeat_request)) {
+            if let Ok(frame) = Frame::new_request(Body::Heartbeat(heartbeat_request)) {
                 if let Err(e) = tx.send(frame).await {
                     error!("Failed to send a heartbeat frame to sender loop: {}", e);
                 }
@@ -141,12 +141,12 @@ impl Agent {
         mut tx: mpsc::Sender<Frame>, // Channel to sender loop.
         imcoming: Arc<Callback>,     // Callback function.
     ) -> Result<()> {
-        let request_seq = request.seq;
+        let response_ack = request.seq;
 
         // Call the callback function in a separated thread.
         let result = tokio::task::spawn_blocking(move || imcoming(request.body)).await?;
         // Make response frame with request seq and response body.
-        let frame = Frame::new_response(result?, request_seq)?;
+        let frame = Frame::new_response(result?, response_ack)?;
         // Send to sender loop.
         tx.send(frame)
             .await

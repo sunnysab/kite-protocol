@@ -106,7 +106,7 @@ impl Host {
             // Read and deserialize the frame
             match Frame::read(&mut buffer[..size]) {
                 Ok(frame) => {
-                    let seq = frame.seq;
+                    let seq = frame.ack;
 
                     // Refresh node list
                     Self::update_node(Arc::clone(&nodes), &addr).await;
@@ -161,7 +161,7 @@ impl Host {
 
         if let Some(sender) = &mut self.sender {
             let (tx, rx) = oneshot::channel::<(Frame, SocketAddrV4)>();
-            let frame = Frame::new(body)?;
+            let frame = Frame::new_request(body)?;
             let seq = frame.seq;
 
             // Acquire wait queue, add sender and release lock immediately.

@@ -35,26 +35,33 @@ pub struct Frame {
     pub size: u16,
     /// Packet sequence number.
     pub seq: u32,
+    /// Packet response sequence number.
+    pub ack: u32,
+    /// Request or response Body.
     pub body: Body,
 }
 
 impl Frame {
     /// Create a new packet
-    pub fn new(b: Body) -> Result<Frame> {
+    pub fn new_request(b: Body) -> Result<Frame> {
         let seq = LAST_SEQ.fetch_add(1, Ordering::Relaxed);
 
         Ok(Frame {
             size: 0,
             seq: seq,
+            ack: 0,
             body: b,
         })
     }
 
     /// Create a new packet
-    pub fn new_response(b: Body, seq: u32) -> Result<Frame> {
+    pub fn new_response(b: Body, ack: u32) -> Result<Frame> {
+        let seq = LAST_SEQ.fetch_add(1, Ordering::Relaxed);
+
         Ok(Frame {
             size: 0,
             seq,
+            ack,
             body: b,
         })
     }
@@ -63,12 +70,13 @@ impl Frame {
     pub fn write(&self) -> Vec<u8> {
         let mut buffer = Vec::new();
         let payload = bincode::serialize(&self.body).unwrap();
-        let size = (10 + payload.len()) as u16;
+        let size = (14 + payload.len()) as u16;
 
         // Note: write function always returns Result::Ok, so we can unwrap directly.
         buffer.write(HEADER_MAGIC_HEADER).unwrap();
         buffer.put_u16_le(size);
         buffer.put_u32(self.seq);
+        buffer.put_u32(self.ack);
         // buffer.put_u8(self.pack_type);
         // buffer.put_u8(self.flag);
         buffer.write(payload.as_slice()).unwrap();
@@ -79,7 +87,7 @@ impl Frame {
     #[allow(dead_code)]
     pub fn read(buffer: &mut [u8]) -> Result<Self> {
         // If packet size < minimun size, throw up an error.
-        if buffer.len() < 10 {
+        if buffer.len() < 14 {
             return Err(ProtocolError::TooSmall(buffer.len()));
         }
         // Check frame magic header.
@@ -92,10 +100,12 @@ impl Frame {
             return Err(ProtocolError::MismatchSize);
         }
         let seq = fields.get_u32_le();
+        let ack = fields.get_u32_le();
         let body: Body = deserialize(fields).unwrap();
         let frame = Self {
             size: buffer.len() as u16,
             seq,
+            ack,
             body,
         };
         Ok(frame)

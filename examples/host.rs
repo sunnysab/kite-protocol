@@ -12,20 +12,26 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use tokio::time::Duration;
 
+pub async fn send_request(mut host: Host) {
+    let request = Body::Heartbeat(Heartbeat::ping("Hello world"));
+    let _ = host.request(request, 5000).await;
+}
+
 #[tokio::main]
 async fn main() {
     init_with_level(log::Level::Info);
     let mut host = Host::new("0.0.0.0", 8288).await.unwrap();
 
     host.start().await;
-
     tokio::time::delay_for(Duration::from_secs(2)).await;
 
-    let request = Body::Heartbeat(Heartbeat::ping("Hello world"));
-    println!("请求 {:?}", request);
     let t = Instant::now();
-    let response = host.request(request, 5000).await;
-    println!("响应 {:?}，用时 {} 纳秒", response, t.elapsed().as_nanos());
+
+    for _ in 1..10 {
+        tokio::spawn(send_request(host.clone()));
+    }
+
+    println!("用时 {} 秒", t.elapsed().as_secs_f32());
 
     loop {
         tokio::time::delay_for(Duration::from_secs(1)).await;
