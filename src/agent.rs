@@ -1,6 +1,6 @@
 use crate::error::{Result, TaskError};
 use crate::protocol::Frame;
-use crate::services::{Body, Heartbeat};
+use crate::services::{AgentBasic, Body};
 use log::{debug, error, info, warn};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::str::FromStr;
@@ -118,12 +118,14 @@ impl Agent {
 
     /// Preset heartbeat loop. When the network status changes, the heartbeat packet can prompt
     /// the host to discover the new address of the Agent.
-    async fn heartbeat_loop(mut tx: mpsc::Sender<Frame>, duration: Duration) {
+    async fn heartbeat_loop(mut tx: mpsc::Sender<Frame>, duration: Duration, name: String) {
         loop {
-            // TODO: Send random data.
-            let heartbeat_request = Heartbeat::ping("Hello world");
+            let agent_basic = AgentBasic {
+                name: name.clone(),
+                local_addr: "".to_string(),
+            };
 
-            if let Ok(frame) = Frame::new_request(Body::Heartbeat(heartbeat_request)) {
+            if let Ok(frame) = Frame::new_request(Body::Discovery(agent_basic)) {
                 if let Err(e) = tx.send(frame).await {
                     error!("Failed to send a heartbeat frame to sender loop: {}", e);
                 }
@@ -217,7 +219,11 @@ impl Agent {
             tx.clone(),
             Arc::clone(&self.request_callback),
         ));
-        tokio::spawn(Self::heartbeat_loop(tx, self.heartbeat_inerval));
+        tokio::spawn(Self::heartbeat_loop(
+            tx,
+            self.heartbeat_inerval,
+            self.name.clone(),
+        ));
         Ok(())
     }
 }

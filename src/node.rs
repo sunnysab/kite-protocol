@@ -21,10 +21,10 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(addr: SocketAddrV4) -> Self {
+    pub fn new(name: String, addr: SocketAddrV4) -> Self {
         Self {
             id: 0,
-            name: "".to_string(),
+            name,
             node_addr: addr,
             last_update: Instant::now(),
             frame_sent: 0,

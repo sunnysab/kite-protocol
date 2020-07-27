@@ -2,7 +2,7 @@ use crate::error::{Result, TaskError};
 use crate::node::Node;
 use crate::protocol::Frame;
 use crate::services::Body;
-use log::{error, info, warn};
+use log::{info, warn};
 use std::collections::HashMap;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Arc;
@@ -63,19 +63,34 @@ impl Host {
     }
 
     /// Update agent list, add agent if not exist, and TODO: remove old agents.
-    async fn update_node(nodes: Arc<Mutex<Vec<Node>>>, addr: &SocketAddrV4) {
-        // Acquire the lock to modify agent node list.
-        let mut nodes = nodes.lock().await;
-        for each_node in nodes.iter_mut() {
-            if each_node.node_addr == *addr {
-                each_node.last_update = Instant::now();
-                return;
+    async fn update_node(nodes: Arc<Mutex<Vec<Node>>>, body: Body, addr: SocketAddrV4) {
+        if let Body::Discovery(agent_basic) = body {
+            // Acquire the lock to modify agent node list.
+            let mut nodes = nodes.lock().await;
+
+            for each_node in nodes.iter_mut() {
+                // Use agent name to identify agents.
+                if each_node.name == agent_basic.name {
+                    // TODO: What to do if an attacker impost? Use encryption?
+                    each_node.node_addr = addr;
+                    each_node.last_update = Instant::now();
+                    info!(
+                        "Update node {}, addr: {}",
+                        each_node.name,
+                        each_node.node_addr.to_string()
+                    );
+                    return;
+                }
             }
+            // The operation of inserting to position 0 is simple.
+            // Maybe it is costly, but insertion doesn't happen often.
+            info!(
+                "Add new agent node ({}): {}",
+                agent_basic.name,
+                addr.to_string()
+            );
+            nodes.insert(0, Node::new(agent_basic.name, addr));
         }
-        // The operation of inserting to position 0 is simple.
-        // Maybe it is costly, but insertion doesn't happen often.
-        info!("Add new agent node: {}", addr.to_string());
-        nodes.insert(0, Node::new(addr.clone()));
     }
 
     /// Choose an available node randomly.
@@ -107,14 +122,16 @@ impl Host {
             match Frame::read(&mut buffer[..size]) {
                 Ok(frame) => {
                     let seq = frame.ack;
-
-                    // Refresh node list
-                    Self::update_node(Arc::clone(&nodes), &addr).await;
-
-                    // Find receiver and post the new response to him.
-                    let mut queue = wait_queue.lock().await;
-                    if let Some(target) = queue.remove(&seq) {
-                        target.send((frame, addr));
+                    // The seq of discovery packet is 0.
+                    if seq == 0 {
+                        // Refresh node list
+                        Self::update_node(Arc::clone(&nodes), frame.body, addr).await;
+                    } else {
+                        // For normal response. Find receiver and post the new response to him.
+                        let mut queue = wait_queue.lock().await;
+                        if let Some(target) = queue.remove(&seq) {
+                            target.send((frame, addr));
+                        }
                     }
                 }
                 Err(e) => warn!("Failed to unpack frame from {}: {:?}", addr.to_string(), e),
@@ -169,7 +186,7 @@ impl Host {
             wait_queue.insert(seq, tx);
             drop(wait_queue);
 
-            info!("Send request to {}: {:?}", node, frame);
+            info!("Send request to {}: {:?}", node, frame.body);
             sender
                 .send((frame, node))
                 .await

@@ -26,7 +26,7 @@ impl From<ProtocolError> for TaskError {
 
 const HEADER_MAGIC_HEADER: &'static [u8; 4] = &[0x07, 0x55, 0xAA, 0xB3];
 lazy_static! {
-    static ref LAST_SEQ: AtomicU32 = AtomicU32::new(0 as u32);
+    static ref LAST_SEQ: AtomicU32 = AtomicU32::new(1 as u32);
 }
 
 const FLAG_COMPRESSED: u8 = 0x01;
