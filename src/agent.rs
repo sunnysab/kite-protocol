@@ -17,6 +17,8 @@ const DEFAULT_HEARTBEAT_INTERVAL_SEC: u32 = 60;
 
 /// Agent Builder, in builder pattern.
 pub struct AgentBuilder {
+    /// Agent name
+    name: String,
     /// Agent local address string
     local_addr: String,
     /// Host address.
@@ -29,8 +31,9 @@ pub struct AgentBuilder {
 
 impl AgentBuilder {
     /// Create and initialize agent(proxy) node.
-    pub fn new(local_port: u16) -> Self {
+    pub fn new(local_name: String, local_port: u16) -> Self {
         Self {
+            name: local_name,
             local_addr: format!("0.0.0.0:{}", local_port),
             host_addr: None,
             request_callback: None,
@@ -62,6 +65,7 @@ impl AgentBuilder {
     /// Build a valid Agent structure. `panic` if host or callback fucntion is not set.
     pub fn build(self) -> Agent {
         Agent {
+            name: self.name,
             local_addr: self.local_addr,
             host_addr: self.host_addr.expect("Host address is needed."),
             request_callback: self
@@ -77,6 +81,7 @@ impl AgentBuilder {
 
 /// Agent node in campus side.
 pub struct Agent {
+    name: String,
     /// Agent local address string
     local_addr: String,
     /// Host address.
