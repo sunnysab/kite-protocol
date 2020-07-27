@@ -1,7 +1,7 @@
 use crate::error::{Result, TaskError};
 use crate::protocol::Frame;
 use crate::services::{Body, Heartbeat};
-use log::{error, info, trace, warn};
+use log::{debug, error, info, warn};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -124,7 +124,7 @@ impl Agent {
             } else {
                 error!("Failed to make heartbeat frame.");
             }
-            trace!("Send a heartbeat frame just now.");
+            debug!("Send a heartbeat frame just now.");
             // Pause for a few seconds
             tokio::time::delay_for(duration).await;
         }
@@ -173,6 +173,7 @@ impl Agent {
                 match Frame::read(&mut buffer[..size]) {
                     Ok(frame) => {
                         // Create a coroutine to process.
+                        debug!("Process packet from {:?}, size = {}", addr, size);
                         tokio::spawn(Self::process(frame, tx.clone(), imcoming.clone()));
                     }
                     Err(e) => warn!("Failed to unpack frame from {}: {:?}", addr.to_string(), e),

@@ -27,6 +27,7 @@ impl From<HostError> for TaskError {
 }
 
 /// Controller, as server side node
+#[derive(Clone)]
 pub struct Host {
     /// Crawler nodes.
     nodes: Arc<Mutex<Vec<Node>>>,
@@ -103,16 +104,20 @@ impl Host {
         // Wait for new udp packet
         while let Ok((size, SocketAddr::V4(addr))) = recv_socket.recv_from(&mut buffer).await {
             // Read and deserialize the frame
-            let frame = Frame::read(&mut buffer[..size]).unwrap();
-            let seq = frame.seq;
+            match Frame::read(&mut buffer[..size]) {
+                Ok(frame) => {
+                    let seq = frame.seq;
 
-            // Refresh node list
-            Self::update_node(Arc::clone(&nodes), &addr).await;
+                    // Refresh node list
+                    Self::update_node(Arc::clone(&nodes), &addr).await;
 
-            // Find receiver and post the new response to him.
-            let mut queue = wait_queue.lock().await;
-            if let Some(target) = queue.remove(&seq) {
-                target.send((frame, addr));
+                    // Find receiver and post the new response to him.
+                    let mut queue = wait_queue.lock().await;
+                    if let Some(target) = queue.remove(&seq) {
+                        target.send((frame, addr));
+                    }
+                }
+                Err(e) => warn!("Failed to unpack frame from {}: {:?}", addr.to_string(), e),
             }
         }
         warn!("Host: Receiver loop exited.");
@@ -165,7 +170,10 @@ impl Host {
             drop(wait_queue);
 
             info!("Send request to {}: {:?}", node, frame);
-            sender.send((frame, node)).await;
+            sender
+                .send((frame, node))
+                .await
+                .map_err(|e| TaskError::SendError(format!("Failed to send at request: {:?}", e)))?;
 
             let response = tokio::time::timeout(Duration::from_millis(timeout), rx).await;
             return match response {
