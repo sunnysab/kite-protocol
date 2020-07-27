@@ -125,7 +125,7 @@ impl Host {
 
     /// The send loop, receive protocol requests and post to crawlers over UDP.
     async fn sender_loop(mut send_socket: SendHalf, mut rx: mpsc::Receiver<(Frame, SocketAddrV4)>) {
-        while let Some((frame, peer)) = rx.recv().await {
+        while let Some((mut frame, peer)) = rx.recv().await {
             let peer = SocketAddr::V4(peer);
 
             send_socket.send_to(frame.write().as_slice(), &peer).await;

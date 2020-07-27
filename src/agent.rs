@@ -104,12 +104,13 @@ impl Agent {
         // Convert SocketAddrV4 to SocketAddr
         let host_addr = SocketAddr::V4(host_addr);
 
-        while let Some(frame) = rx.recv().await {
+        while let Some(mut frame) = rx.recv().await {
             let r = send_socket
                 .send_to(frame.write().as_slice(), &host_addr)
                 .await;
-            if let Err(e) = r {
-                error!("Agent: Failed to send frame: {}", e);
+            match r {
+                Ok(size) => info!("Send a packet with size = {}", size),
+                Err(e) => error!("Agent: Failed to send frame: {}", e),
             }
         }
         warn!("Agent: sender loop exited.");
