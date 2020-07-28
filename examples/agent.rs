@@ -5,7 +5,7 @@ extern crate simple_logger;
 
 use kite_protocol::agent;
 use kite_protocol::agent::Callback;
-use kite_protocol::error::Result;
+use kite_protocol::error::{Result, TaskError};
 use kite_protocol::services::{self, Body};
 use simple_logger::init_with_level;
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -13,8 +13,12 @@ use std::sync::Arc;
 use tokio::time::Duration;
 
 pub fn on_request(body: Body) -> Result<Body> {
-    println!("请求: {:?}", body);
-    Ok(body)
+    use kite_protocol::services::Heartbeat;
+
+    return match body {
+        Body::Heartbeat(heartbeat) => Ok(Body::Heartbeat(heartbeat.pong())),
+        _ => Err(TaskError::SendError("test".to_string())),
+    };
 }
 
 #[tokio::main]
