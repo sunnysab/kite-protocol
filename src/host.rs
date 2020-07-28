@@ -95,15 +95,14 @@ impl Host {
 
     /// Choose an available node randomly.
     async fn choose_node(&mut self, _body: &Body) -> Option<SocketAddrV4> {
+        use rand::seq::SliceRandom;
+
         let mut nodes = self.nodes.lock().await;
-        if nodes.len() != 0 {
-            // TODO: 随机选择节点
-            // TODO: 淘汰过旧节点（最好单独开个任务做）
-            // 如果节点实际失效，下面一行代码可能导致失效节点不会被删除
-            nodes[0].last_update = Instant::now();
-            return Some(nodes[0].node_addr);
-        }
-        return None;
+        // TODO: 淘汰过旧节点（最好单独开个任务做）
+        let mut rng = rand::thread_rng();
+        nodes[..]
+            .choose(&mut rng)
+            .and_then(|node| Some(node.node_addr))
     }
 
     /// Receive frames and post them to where they should go :D

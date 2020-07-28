@@ -10,7 +10,7 @@ pub struct Node {
     pub name: String,
     /// Peer address. Used to identify nodes.
     pub node_addr: SocketAddrV4,
-    /// Last communication time.
+    /// Last communication time. Updated by discovery service.
     pub last_update: Instant,
 
     /* Statistic information. */
