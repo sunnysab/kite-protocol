@@ -97,7 +97,7 @@ impl Host {
     async fn choose_node(&mut self, _body: &Body) -> Option<SocketAddrV4> {
         use rand::seq::SliceRandom;
 
-        let mut nodes = self.nodes.lock().await;
+        let nodes = self.nodes.lock().await;
         // TODO: 淘汰过旧节点（最好单独开个任务做）
         let mut rng = rand::thread_rng();
         nodes[..]
