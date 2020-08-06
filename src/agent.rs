@@ -10,13 +10,13 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
 
-pub type Callback = fn(Body) -> Result<Body>;
+pub type Callback<T> = fn(Body, T) -> Result<Body>;
 
 /// Default heartbeat interval in sec.
 const DEFAULT_HEARTBEAT_INTERVAL_SEC: u32 = 60;
 
 /// Agent Builder, in builder pattern.
-pub struct AgentBuilder {
+pub struct AgentBuilder<T> {
     /// Agent name
     name: String,
     /// Agent local address string
@@ -24,12 +24,17 @@ pub struct AgentBuilder {
     /// Host address.
     host_addr: Option<SocketAddrV4>,
     /// Callback function will be called when host requests
-    request_callback: Option<Arc<Callback>>,
+    request_callback: Option<Arc<Callback<T>>>,
+    /// Callback parameter.
+    parameter: Option<T>,
     /// Heartbeat interval
     heartbeat_interval: Option<Duration>,
 }
 
-impl AgentBuilder {
+impl<T> AgentBuilder<T>
+where
+    T: 'static + std::marker::Send + Clone,
+{
     /// Create and initialize agent(proxy) node.
     pub fn new(local_name: String, local_port: u16) -> Self {
         Self {
@@ -37,6 +42,7 @@ impl AgentBuilder {
             local_addr: format!("0.0.0.0:{}", local_port),
             host_addr: None,
             request_callback: None,
+            parameter: None,
             heartbeat_interval: None,
         }
     }
@@ -51,19 +57,20 @@ impl AgentBuilder {
     }
 
     /// Set callback function which will be called when packet comes.
-    pub fn set_callback(mut self, callback_fn: Arc<Callback>) -> Self {
+    pub fn set_callback(mut self, callback_fn: Arc<Callback<T>>, parameter: T) -> Self {
         self.request_callback = Some(callback_fn.clone());
+        self.parameter = Some(parameter);
         self
     }
 
     /// Set heartbeat interval
-    pub fn set_heartbeart_interval(mut self, duration: Duration) -> Self {
+    pub fn set_heartbeat_interval(mut self, duration: Duration) -> Self {
         self.heartbeat_interval = Some(duration);
         self
     }
 
-    /// Build a valid Agent structure. `panic` if host or callback fucntion is not set.
-    pub fn build(self) -> Agent {
+    /// Build a valid Agent structure. `panic` if host or callback function is not set.
+    pub fn build(self) -> Agent<T> {
         Agent {
             name: self.name,
             local_addr: self.local_addr,
@@ -72,6 +79,7 @@ impl AgentBuilder {
                 .request_callback
                 .expect("You should set callback function.")
                 .clone(),
+            parameter: self.parameter.expect("You should set callback parameter."),
             heartbeat_inerval: self
                 .heartbeat_interval
                 .unwrap_or(Duration::from_secs(DEFAULT_HEARTBEAT_INTERVAL_SEC as u64)),
@@ -80,19 +88,24 @@ impl AgentBuilder {
 }
 
 /// Agent node in campus side.
-pub struct Agent {
+pub struct Agent<T> {
     name: String,
     /// Agent local address string
     local_addr: String,
     /// Host address.
     host_addr: SocketAddrV4,
     /// Callback function will be called when host requests
-    request_callback: Arc<Callback>,
+    request_callback: Arc<Callback<T>>,
+    /// Callback parameter
+    parameter: T,
     /// Default heartbeat interval
     heartbeat_inerval: Duration,
 }
 
-impl Agent {
+impl<T> Agent<T>
+where
+    T: 'static + std::marker::Send + Clone,
+{
     /// Receive packets from the inner channel and transfer them to host over Udp.
     /// It will be run as a tokio task, and exites when tx closed.
     // TODO: Support close this task manually.
@@ -142,12 +155,14 @@ impl Agent {
     async fn process(
         request: Frame,              // Request frame.
         mut tx: mpsc::Sender<Frame>, // Channel to sender loop.
-        imcoming: Arc<Callback>,     // Callback function.
+        imcoming: Arc<Callback<T>>,  // Callback function.
+        callback_data: T,            // Callback parameter defined by user.
     ) -> Result<()> {
         let response_ack = request.seq;
 
         // Call the callback function in a separated thread.
-        let result = tokio::task::spawn_blocking(move || imcoming(request.body)).await?;
+        let result =
+            tokio::task::spawn_blocking(move || imcoming(request.body, callback_data)).await?;
         // Make response frame with request seq and response body.
         let frame = Frame::new_response(result?, response_ack)?;
         // Send to sender loop.
@@ -159,9 +174,10 @@ impl Agent {
 
     /// Receiver loop, accept commands and requests from the host and execute them.
     async fn receiver_loop(
-        mut recv_socket: RecvHalf, // Udp recv half.
-        tx: mpsc::Sender<Frame>,   // Channel to sender loop.
-        imcoming: Arc<Callback>,   // Callback function.
+        mut recv_socket: RecvHalf,  // Udp recv half.
+        tx: mpsc::Sender<Frame>,    // Channel to sender loop.
+        imcoming: Arc<Callback<T>>, // Callback function.
+        parameter: T,
     ) {
         // Alloc a 512K size buffer.
         let mut buffer = vec![0u8; 512 * 1024];
@@ -182,7 +198,12 @@ impl Agent {
                     Ok(frame) => {
                         // Create a coroutine to process.
                         debug!("Process packet from {:?}, size = {}", addr, size);
-                        tokio::spawn(Self::process(frame, tx.clone(), imcoming.clone()));
+                        tokio::spawn(Self::process(
+                            frame,
+                            tx.clone(),
+                            imcoming.clone(),
+                            parameter.clone(),
+                        ));
                     }
                     Err(e) => warn!("Failed to unpack frame from {}: {:?}", addr.to_string(), e),
                 }
@@ -218,6 +239,7 @@ impl Agent {
             recv_socket,
             tx.clone(),
             Arc::clone(&self.request_callback),
+            self.parameter.clone(),
         ));
         tokio::spawn(Self::heartbeat_loop(
             tx,
